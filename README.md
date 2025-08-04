@@ -3,6 +3,8 @@ Nomad
 [![Discuss](https://img.shields.io/badge/discuss-nomad-00BC7F?style=flat)](https://discuss.hashicorp.com/c/nomad)
 ===
 
+> **Note**: This is a fork of HashiCorp Nomad primarily focused on creating builds for RISC-V architecture. This fork will be kept in sync with the upstream Nomad repository.
+
 <p align="center" style="text-align:center;">
   <a href="https://developer.hashicorp.com/nomad">
     <img alt="HashiCorp Nomad logo" src="website/public/img/logo-hashicorp.svg" width="500" />
