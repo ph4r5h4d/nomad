@@ -101,34 +101,33 @@ jobs:
 
       - name: Patch go.mod for RISC-V compatibility
         run: |
-          echo "=== Original go.mod dependencies ==="
-          grep -E "(boltdb|bbolt|raft-boltdb)" go.mod || echo "No bolt dependencies found"
+          echo "=== Original problematic dependencies ==="
+          grep -E "(boltdb|raft-boltdb)" go.mod || echo "No problematic dependencies found"
           
-          # Get the existing bbolt version from go.mod
-          BBOLT_VERSION=$(grep "go.etcd.io/bbolt" go.mod | awk '{print $2}')
-          echo "Found existing bbolt version: $BBOLT_VERSION"
+          # Remove the unsupported boltdb dependency
+          sed -i '/github.com\/boltdb\/bolt.*\/\/ indirect/d' go.mod
           
-          # Remove the problematic old raft-boltdb line that causes conflicts
-          sed -i '/github.com\/hashicorp\/raft-boltdb v0.0.0/d' go.mod
+          # Remove the old raft-boltdb v0.0.0 that causes conflicts
+          sed -i '/github.com\/hashicorp\/raft-boltdb v0.0.0.*\/\/ indirect/d' go.mod
           
-          # Add comprehensive replace directives for RISC-V compatibility
+          # Add RISC-V compatible raft-boltdb fork replace directive using echo
           echo "" >> go.mod
-          echo "// Temporary RISC-V compatibility fixes" >> go.mod
-          echo "replace github.com/boltdb/bolt => go.etcd.io/bbolt $BBOLT_VERSION" >> go.mod
-          echo "replace github.com/hashicorp/raft-boltdb => github.com/hashicorp/raft-boltdb/v2 v2.3.1" >> go.mod
+          echo "// RISC-V compatibility - use Elara's fork that supports RISC-V" >> go.mod
+          echo "replace github.com/hashicorp/raft-boltdb/v2 => github.com/Elara6331/raft-boltdb/v2 v2.0.0-20230729002801-1a3bff1d87a7" >> go.mod
           
-          echo "=== Modified go.mod replace section ==="
-          tail -10 go.mod
+          echo "=== After patching ==="
+          grep -E "(boltdb|raft-boltdb)" go.mod || echo "No problematic dependencies remain"
           
-          # Clean module cache and update dependencies for RISC-V
+          # Clean and regenerate dependencies for RISC-V
           go clean -modcache
+          rm -f go.sum
           CGO_ENABLED=1 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CC=riscv64-linux-gnu-gcc go mod tidy
           
           echo "=== Final verification ==="
-          echo "Checking for problematic dependencies:"
-          grep -i "boltdb" go.sum || echo "✅ No boltdb in go.sum"
-          echo "Checking bbolt usage:"
-          grep "go.etcd.io/bbolt" go.sum | wc -l || echo "❌ No bbolt found"
+          echo "BoltDB references in go.sum:"
+          grep -c "boltdb" go.sum || echo "✅ 0 boltdb references"
+          echo "BBolt references in go.sum:"  
+          grep -c "bbolt" go.sum || echo "Found bbolt references"
 
       - name: Build RISC-V binary
         env:
