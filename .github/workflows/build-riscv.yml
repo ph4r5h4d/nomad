@@ -101,18 +101,29 @@ jobs:
 
       - name: Patch go.mod for RISC-V compatibility
         run: |
+          echo "=== Original go.mod dependencies ==="
+          grep -E "(boltdb|bbolt)" go.mod || echo "No bolt dependencies found in requirements"
+          grep -E "(boltdb|bbolt)" go.mod | head -10 || true
+          
           # Get the existing bbolt version from go.mod
           BBOLT_VERSION=$(grep "go.etcd.io/bbolt" go.mod | awk '{print $2}')
           echo "Found existing bbolt version: $BBOLT_VERSION"
           
-          # Replace github.com/boltdb/bolt with go.etcd.io/bbolt in go.mod
-          # This removes the conflicting boltdb dependency for RISC-V build
-          sed -i 's|github.com/boltdb/bolt.*|go.etcd.io/bbolt '"$BBOLT_VERSION"'|g' go.mod
+          # Add replace directive to force boltdb -> bbolt replacement
+          echo "" >> go.mod
+          echo "// Temporary RISC-V compatibility fix" >> go.mod
+          echo "replace github.com/boltdb/bolt => go.etcd.io/bbolt $BBOLT_VERSION" >> go.mod
           
-          # Update dependencies for RISC-V cross-compilation
+          echo "=== Modified go.mod replace section ==="
+          tail -5 go.mod
+          
+          # Clean module cache and update dependencies
+          go clean -modcache
           CGO_ENABLED=1 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CC=riscv64-linux-gnu-gcc go mod tidy
           
-          echo "go.mod patched for RISC-V build (changes are temporary and not committed)"
+          echo "=== Verifying no boltdb in go.sum ==="
+          grep -i "boltdb" go.sum || echo "✅ No boltdb references in go.sum"
+          grep -i "bbolt" go.sum | head -3 || echo "❌ No bbolt references found"
 
       - name: Build RISC-V binary
         env:
