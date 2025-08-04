@@ -102,28 +102,33 @@ jobs:
       - name: Patch go.mod for RISC-V compatibility
         run: |
           echo "=== Original go.mod dependencies ==="
-          grep -E "(boltdb|bbolt)" go.mod || echo "No bolt dependencies found in requirements"
-          grep -E "(boltdb|bbolt)" go.mod | head -10 || true
+          grep -E "(boltdb|bbolt|raft-boltdb)" go.mod || echo "No bolt dependencies found"
           
           # Get the existing bbolt version from go.mod
           BBOLT_VERSION=$(grep "go.etcd.io/bbolt" go.mod | awk '{print $2}')
           echo "Found existing bbolt version: $BBOLT_VERSION"
           
-          # Add replace directive to force boltdb -> bbolt replacement
+          # Remove the problematic old raft-boltdb line that causes conflicts
+          sed -i '/github.com\/hashicorp\/raft-boltdb v0.0.0/d' go.mod
+          
+          # Add comprehensive replace directives for RISC-V compatibility
           echo "" >> go.mod
-          echo "// Temporary RISC-V compatibility fix" >> go.mod
+          echo "// Temporary RISC-V compatibility fixes" >> go.mod
           echo "replace github.com/boltdb/bolt => go.etcd.io/bbolt $BBOLT_VERSION" >> go.mod
+          echo "replace github.com/hashicorp/raft-boltdb => github.com/hashicorp/raft-boltdb/v2 v2.3.1" >> go.mod
           
           echo "=== Modified go.mod replace section ==="
-          tail -5 go.mod
+          tail -10 go.mod
           
-          # Clean module cache and update dependencies
+          # Clean module cache and update dependencies for RISC-V
           go clean -modcache
           CGO_ENABLED=1 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CC=riscv64-linux-gnu-gcc go mod tidy
           
-          echo "=== Verifying no boltdb in go.sum ==="
-          grep -i "boltdb" go.sum || echo "✅ No boltdb references in go.sum"
-          grep -i "bbolt" go.sum | head -3 || echo "❌ No bbolt references found"
+          echo "=== Final verification ==="
+          echo "Checking for problematic dependencies:"
+          grep -i "boltdb" go.sum || echo "✅ No boltdb in go.sum"
+          echo "Checking bbolt usage:"
+          grep "go.etcd.io/bbolt" go.sum | wc -l || echo "❌ No bbolt found"
 
       - name: Build RISC-V binary
         env:
