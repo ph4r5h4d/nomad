@@ -110,10 +110,10 @@ jobs:
           # Remove the old raft-boltdb v0.0.0 that causes conflicts
           sed -i '/github.com\/hashicorp\/raft-boltdb v0.0.0.*\/\/ indirect/d' go.mod
           
-          # Add RISC-V compatibility using Elara's fork (which handles bbolt internally)
+          # Add RISC-V compatibility using etcd.io's fork (which handles bbolt internally)
           echo "" >> go.mod
-          echo "// RISC-V compatibility - Elara's fork handles bolt/bbolt internally" >> go.mod
-          echo "replace github.com/hashicorp/raft-boltdb/v2 => github.com/Elara6331/raft-boltdb/v2 v2.0.0-20230729002801-1a3bff1d87a7" >> go.mod
+          echo "// RISC-V compatibility - etcd.io's fork handles bolt/bbolt internally" >> go.mod
+          echo "replace github.com/hashicorp/raft-boltdb/v2 => go.etcd.io/bbolt v1.4.2" >> go.mod
           
           echo "=== After patching ==="
           grep -E "(boltdb|raft-boltdb)" go.mod || echo "No problematic dependencies remain"
