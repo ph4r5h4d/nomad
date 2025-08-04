@@ -1,0 +1,269 @@
+# RISC-V specific build workflow for Nomad
+# This workflow builds Nomad binaries specifically for RISC-V architecture
+# and handles BoltDB dependency replacement to avoid compilation issues
+
+name: build-riscv
+
+on:
+  push:
+    branches:
+      - main
+      - riscv
+  workflow_dispatch:
+    inputs:
+      build-ref:
+        description: 'The git ref to build from'
+        type: string
+        default: ''
+        required: false
+      make-prerelease:
+        description: "Run prerelease to generate files"
+        type: "boolean"
+        required: false
+        default: true
+
+env:
+  PKG_NAME: "nomad"
+  GO_TAGS: "release"
+
+jobs:
+  get-go-version:
+    runs-on: ubuntu-22.04
+    outputs:
+      go-version: ${{ steps.get-go-version.outputs.go-version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.build-ref }}
+      - name: Determine Go version
+        id: get-go-version
+        run: |-
+          echo "Building with Go $(cat .go-version)"
+          echo "go-version=$(cat .go-version)" >> "$GITHUB_OUTPUT"
+
+  get-product-version:
+    runs-on: ubuntu-22.04
+    outputs:
+      product-version: ${{ steps.get-product-version.outputs.product-version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.build-ref }}
+      - name: get product version
+        id: get-product-version
+        run: |-
+          make version
+          echo "product-version=$(make version)" >> "$GITHUB_OUTPUT"
+
+  build-riscv:
+    needs: [get-go-version, get-product-version]
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        goos: [linux]
+        goarch: [riscv64]
+      fail-fast: true
+
+    name: Go ${{ needs.get-go-version.outputs.go-version }} ${{ matrix.goos }} ${{ matrix.goarch }} RISC-V build
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.inputs.build-ref }}
+
+      - name: Setup go
+        uses: actions/setup-go@f111f3307d8850f501ac008e886eec1fd1932a34 # v5.3.0
+        with:
+          go-version: ${{ needs.get-go-version.outputs.go-version }}
+
+      - name: Setup node and yarn
+        uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a # v4.2.0
+        with:
+          node-version: "20"
+          cache-dependency-path: "ui/yarn.lock"
+
+      - name: Install Yarn
+        run: |
+          npm install -g yarn
+
+      - name: Build dependencies
+        run: make deps
+
+      - name: Build prerelease
+        run: make prerelease
+        if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.make-prerelease == 'true' }}
+
+      - name: Setup RISC-V cross-compilation environment
+        run: |
+          # Install RISC-V cross-compilation tools
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-linux-gnu
+
+      - name: Create temporary go.mod with RISC-V compatible dependencies
+        run: |
+          # Create a temporary go.mod.riscv with BoltDB replacement
+          cp go.mod go.mod.backup
+          
+          # Add replace directive for BoltDB -> bbolt compatibility
+          echo "" >> go.mod
+          echo "// RISC-V compatibility replacement" >> go.mod
+          echo "replace github.com/boltdb/bolt => go.etcd.io/bbolt v1.4.2" >> go.mod
+          
+          # Update go.sum to include the replacement
+          CGO_ENABLED=1 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CC=riscv64-linux-gnu-gcc go mod tidy
+
+      - name: Build RISC-V binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GO_TAGS: ${{ env.GO_TAGS }}
+          CGO_ENABLED: 1
+          CC: riscv64-linux-gnu-gcc
+        run: |
+          echo "Building Nomad for RISC-V..."
+          go clean -cache
+          
+          # Build the binary
+          go build \
+            -tags="${GO_TAGS}" \
+            -ldflags="-X github.com/hashicorp/nomad/version.GitCommit=$(git rev-parse HEAD)" \
+            -o nomad \
+            .
+          
+          # Create package directory and copy binary
+          mkdir -p pkg/${{ matrix.goos }}_${{ matrix.goarch }}
+          cp nomad pkg/${{ matrix.goos }}_${{ matrix.goarch }}/
+          
+          # Create zip package
+          cd pkg
+          zip -r ${{ matrix.goos }}_${{ matrix.goarch }}.zip ${{ matrix.goos }}_${{ matrix.goarch }}/
+          cd ..
+          
+          # Rename with version
+          mv pkg/${{ matrix.goos }}_${{ matrix.goarch }}.zip ${{ env.PKG_NAME }}_${{ needs.get-product-version.outputs.product-version }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip
+
+      - name: Restore original go.mod
+        run: |
+          mv go.mod.backup go.mod
+          git checkout -- go.sum || true
+
+      - name: Test RISC-V binary
+        run: |
+          echo "Testing RISC-V binary..."
+          file ${{ env.PKG_NAME }}_${{ needs.get-product-version.outputs.product-version }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip
+          unzip -l ${{ env.PKG_NAME }}_${{ needs.get-product-version.outputs.product-version }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip
+          
+          # Extract and verify the binary
+          unzip ${{ env.PKG_NAME }}_${{ needs.get-product-version.outputs.product-version }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip
+          file ${{ matrix.goos }}_${{ matrix.goarch }}/nomad
+          
+          # Verify it's built for RISC-V
+          if file ${{ matrix.goos }}_${{ matrix.goarch }}/nomad | grep -q "RISC-V"; then
+            echo "✅ Successfully built for RISC-V architecture"
+          else
+            echo "❌ Binary not built for RISC-V architecture"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
+        with:
+          name: ${{ env.PKG_NAME }}_${{ needs.get-product-version.outputs.product-version }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip
+          path: ${{ env.PKG_NAME }}_${{ needs.get-product-version.outputs.product-version }}_${{ matrix.goos }}_${{ matrix.goarch }}.zip
+
+  create-release:
+    needs: [get-product-version, build-riscv]
+    runs-on: ubuntu-22.04
+    if: github.ref == 'refs/heads/riscv' || github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download artifacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: ${{ env.PKG_NAME }}_${{ needs.get-product-version.outputs.product-version }}_linux_riscv64.zip
+
+      - name: Create Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            
+            const tag = 'v${{ needs.get-product-version.outputs.product-version }}-riscv';
+            const releaseName = 'Nomad ${{ needs.get-product-version.outputs.product-version }} for RISC-V';
+            
+            // Check if release already exists
+            try {
+              const existingRelease = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: tag
+              });
+              
+              console.log('Release already exists, updating...');
+              
+              // Upload asset to existing release
+              const assetData = fs.readFileSync('${{ env.PKG_NAME }}_${{ needs.get-product-version.outputs.product-version }}_linux_riscv64.zip');
+              
+              await github.rest.repos.uploadReleaseAsset({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                release_id: existingRelease.data.id,
+                name: '${{ env.PKG_NAME }}_${{ needs.get-product-version.outputs.product-version }}_linux_riscv64.zip',
+                data: assetData
+              });
+              
+            } catch (error) {
+              if (error.status === 404) {
+                console.log('Creating new release...');
+                
+                // Create new release
+                const release = await github.rest.repos.createRelease({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag_name: tag,
+                  name: releaseName,
+                  body: `
+            ## Nomad ${{ needs.get-product-version.outputs.product-version }} for RISC-V
+            
+            This is a RISC-V build of HashiCorp Nomad, built from the upstream repository with RISC-V compatibility patches.
+            
+            ### What's included:
+            - \`nomad_${{ needs.get-product-version.outputs.product-version }}_linux_riscv64.zip\` - Nomad binary for Linux RISC-V 64-bit
+            
+            ### Installation:
+            1. Download the appropriate zip file
+            2. Extract the binary: \`unzip nomad_${{ needs.get-product-version.outputs.product-version }}_linux_riscv64.zip\`
+            3. Make it executable: \`chmod +x linux_riscv64/nomad\`
+            4. Move to your PATH: \`sudo mv linux_riscv64/nomad /usr/local/bin/\`
+            
+            ### Notes:
+            - This build includes patches for RISC-V compatibility by replacing BoltDB with bbolt
+            - Built from upstream commit: \`${{ github.sha }}\`
+            - For issues specific to RISC-V builds, please file them in this repository
+            - For general Nomad issues, please use the [upstream repository](https://github.com/hashicorp/nomad)
+                  `,
+                  draft: false,
+                  prerelease: false
+                });
+                
+                // Upload asset
+                const assetData = fs.readFileSync('${{ env.PKG_NAME }}_${{ needs.get-product-version.outputs.product-version }}_linux_riscv64.zip');
+                
+                await github.rest.repos.uploadReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: release.data.id,
+                  name: '${{ env.PKG_NAME }}_${{ needs.get-product-version.outputs.product-version }}_linux_riscv64.zip',
+                  data: assetData
+                });
+                
+                console.log(`Release created: ${release.data.html_url}`);
+              } else {
+                throw error;
+              }
+            }
+
+permissions:
+  contents: write
+  actions: read
