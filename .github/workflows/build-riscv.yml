@@ -99,53 +99,48 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gcc-riscv64-linux-gnu
 
-      - name: Patch go.mod for RISC-V compatibility
-        run: |
-          echo "=== Original problematic dependencies ==="
-          grep -E "(boltdb|raft-boltdb)" go.mod || echo "No problematic dependencies found"
+      # - name: Patch go.mod for RISC-V compatibility
+      #   run: |
+      #     echo "=== Original problematic dependencies ==="
+      #     grep -E "(boltdb|raft-boltdb)" go.mod || echo "No problematic dependencies found"
           
-          # Remove the unsupported boltdb dependency
-          sed -i '/github.com\/boltdb\/bolt.*\/\/ indirect/d' go.mod
+      #     # Remove the unsupported boltdb dependency
+      #     sed -i '/github.com\/boltdb\/bolt.*\/\/ indirect/d' go.mod
           
-          # Remove the old raft-boltdb v0.0.0 that causes conflicts
-          sed -i '/github.com\/hashicorp\/raft-boltdb v0.0.0.*\/\/ indirect/d' go.mod
+      #     # Remove the old raft-boltdb v0.0.0 that causes conflicts
+      #     sed -i '/github.com\/hashicorp\/raft-boltdb v0.0.0.*\/\/ indirect/d' go.mod
           
-          # Add RISC-V compatibility using etcd.io's fork (which handles bbolt internally)
-          echo "" >> go.mod
-          echo "// RISC-V compatibility - etcd.io's fork handles bolt/bbolt internally" >> go.mod
-          echo "replace github.com/hashicorp/raft-boltdb/v2 => go.etcd.io/bbolt v1.4.2" >> go.mod
+      #     # Add RISC-V compatibility using etcd.io's fork (which handles bbolt internally)
+      #     echo "" >> go.mod
+      #     echo "// RISC-V compatibility - etcd.io's fork handles bolt/bbolt internally" >> go.mod
+      #     echo "replace github.com/hashicorp/raft-boltdb/v2 => go.etcd.io/bbolt v1.4.2" >> go.mod
           
-          echo "=== After patching ==="
-          grep -E "(boltdb|raft-boltdb)" go.mod || echo "No problematic dependencies remain"
+      #     echo "=== After patching ==="
+      #     grep -E "(boltdb|raft-boltdb)" go.mod || echo "No problematic dependencies remain"
           
-          # Clean and regenerate dependencies for RISC-V
-          go clean -modcache
-          rm -f go.sum
-          CGO_ENABLED=1 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CC=riscv64-linux-gnu-gcc go mod tidy
+      #     # Clean and regenerate dependencies for RISC-V
+      #     go clean -modcache
+      #     rm -f go.sum
+      #     CGO_ENABLED=1 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CC=riscv64-linux-gnu-gcc go mod tidy
           
-          echo "=== Final verification ==="
-          echo "BoltDB references in go.sum:"
-          grep -c "boltdb" go.sum || echo "✅ 0 boltdb references"
-          echo "BBolt references in go.sum:"  
-          grep -c "bbolt" go.sum || echo "Found bbolt references"
+      #     echo "=== Final verification ==="
+      #     echo "BoltDB references in go.sum:"
+      #     grep -c "boltdb" go.sum || echo "✅ 0 boltdb references"
+      #     echo "BBolt references in go.sum:"  
+      #     grep -c "bbolt" go.sum || echo "Found bbolt references"
 
       - name: Build RISC-V binary
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
+          GOOS: linux
+          GOARCH: riscv64
           GO_TAGS: ${{ env.GO_TAGS }}
           CGO_ENABLED: 1
           CC: riscv64-linux-gnu-gcc
+          CXX: riscv64-linux-gnu-c++
+          AR: riscv64-linux-gnu-gcc-ar
         run: |
           echo "Building Nomad for RISC-V..."
-          go clean -cache
-          
-          # Build the binary
-          go build \
-            -tags="${GO_TAGS}" \
-            -ldflags="-X github.com/hashicorp/nomad/version.GitCommit=$(git rev-parse HEAD)" \
-            -o nomad \
-            .
+          make GOOS=linux GOARCH=riscv64 CC=riscv64-linux-gnu-gcc CXX=riscv64-linux-gnu-c++ AR=riscv64-linux-gnu-gcc-ar dev
           
           # Create package directory and copy binary
           mkdir -p pkg/${{ matrix.goos }}_${{ matrix.goarch }}

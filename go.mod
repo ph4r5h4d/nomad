@@ -6,6 +6,7 @@ go 1.24.5
 replace (
 	github.com/Microsoft/go-winio => github.com/endocrimes/go-winio v0.4.13-0.20190628114223-fb47a8b41948
 	github.com/hashicorp/hcl => github.com/hashicorp/hcl v1.0.1-nomad-1
+	github.com/hashicorp/raft-boltdb/v2 => github.com/Elara6331/raft-boltdb/v2 v2.0.0-20230729002801-1a3bff1d87a7
 )
 
 // Nomad is built using the current source of the API module.
